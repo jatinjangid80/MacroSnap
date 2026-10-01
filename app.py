@@ -18,15 +18,17 @@ def get_gemini_client():
 
 
 gemini_client = get_gemini_client()
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.8-flash"
 
 
 def send_telegram(chat_id, text):
     try:
+        raw_id = str(chat_id).strip()
+        final_chat_id = int(raw_id) if raw_id.lstrip("-").isdigit() else raw_id
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         response = requests.post(
             url,
-            json={"chat_id": chat_id, "text": text},
+            json={"chat_id": final_chat_id, "text": text},
             timeout=10,
         )
         data = response.json()
@@ -133,17 +135,15 @@ with header_col:
     st.title("🥗 MacroSnap")
 
 with button_col:
-    if st.button("📤 Send to Telegram", use_container_width=True):
-        if len(st.session_state.messages) <= 1:
-            st.info("💡 Please log a meal first (send a photo or description below) so I have something to summarize!")
+    send_disabled = len(st.session_state.messages) <= 1
+    if st.button("📤 Send to Telegram", disabled=send_disabled, use_container_width=True):
+        with st.spinner("Summarizing your day..."):
+            summary = ask_gemini([SUMMARY_REQUEST_PROMPT])
+        success, info = send_telegram(st.session_state.telegram_chat_id, summary)
+        if success:
+            st.success("Sent! Check your Telegram 📲")
         else:
-            with st.spinner("Summarizing your meals..."):
-                summary = ask_gemini([SUMMARY_REQUEST_PROMPT])
-            success, info = send_telegram(st.session_state.telegram_chat_id, summary)
-            if success:
-                st.success("Sent! Check your Telegram 📲")
-            else:
-                st.error(f"Couldn't send that: {info}")
+            st.error(f"Couldn't send that: {info}")
 
 st.caption(f"Logged in as {st.session_state.name} • Updates go to Telegram Chat ID: {st.session_state.telegram_chat_id}")
 
