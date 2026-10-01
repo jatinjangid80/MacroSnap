@@ -18,7 +18,7 @@ def get_gemini_client():
 
 
 gemini_client = get_gemini_client()
-MODEL_NAME = "gemini-3.8-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
 
 def send_telegram(chat_id, text):
