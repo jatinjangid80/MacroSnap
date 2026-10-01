@@ -11,6 +11,10 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 TELEGRAM_BOT_TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
 BOT_USERNAME = "MacroSnapjatinbot"
 
+# Reliable production models with automatic fallback
+PRIMARY_MODEL = "gemini-2.5-flash"
+FALLBACK_MODEL = "gemini-3.5-flash-lite"
+
 
 @st.cache_resource
 def get_gemini_client():
@@ -18,7 +22,13 @@ def get_gemini_client():
 
 
 gemini_client = get_gemini_client()
-MODEL_NAME = "gemini-3.8-flash"
+
+
+def init_chat_session(model_name=PRIMARY_MODEL):
+    return gemini_client.chats.create(
+        model=model_name,
+        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+    )
 
 
 def send_telegram(chat_id, text):
@@ -69,10 +79,21 @@ def add_message(role, kind, content):
 
 
 def ask_gemini(parts):
+    # Ensure chat is initialized
+    if "chat" not in st.session_state or st.session_state.chat is None:
+        st.session_state.chat = init_chat_session(PRIMARY_MODEL)
+
     try:
-        return st.session_state.chat.send_message(parts).text
+        response = st.session_state.chat.send_message(parts)
+        return response.text
     except Exception as error:
-        return f"Sorry, something went wrong: {error}"
+        # If primary model fails with 503 or overload, retry with fallback model
+        try:
+            st.session_state.chat = init_chat_session(FALLBACK_MODEL)
+            response = st.session_state.chat.send_message(parts)
+            return response.text
+        except Exception as fallback_error:
+            return f"Sorry, something went wrong: {fallback_error}"
 
 
 if "messages" not in st.session_state:
@@ -96,18 +117,16 @@ if "onboarded" not in st.session_state:
     with st.form("onboarding_form"):
         default_name = detected_name if detected_name else ""
         name = st.text_input("Your name", value=default_name)
-        
+
         default_chat_id = detected_id if detected_id else ""
         telegram_chat_id = st.text_input(
             "Telegram Chat ID",
             value=default_chat_id,
-            placeholder="e.g. 95XXXXXX",
-            help="Your chat ID with the bot. Send a message to the bot and it will auto-fill!",
+            placeholder="e.g. 8347561256",
+            help="Your chat ID with the bot. Send a message to @MacroSnapjatinbot and it auto-fills!",
         )
 
-        col_submit, col_detect = st.columns([2, 1])
-        with col_submit:
-            submitted = st.form_submit_button("Let's go 🚀", use_container_width=True)
+        submitted = st.form_submit_button("Let's go 🚀", use_container_width=True)
 
     if submitted:
         if not name.strip() or not telegram_chat_id.strip():
@@ -115,11 +134,7 @@ if "onboarded" not in st.session_state:
         else:
             st.session_state.name = name.strip()
             st.session_state.telegram_chat_id = telegram_chat_id.strip()
-            # Activate Gemini AI
-            st.session_state.chat = gemini_client.chats.create(
-                model=MODEL_NAME,
-                config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-            )
+            st.session_state.chat = init_chat_session(PRIMARY_MODEL)
             st.session_state.messages = []
             st.session_state.onboarded = True
             st.rerun()
@@ -135,15 +150,17 @@ with header_col:
     st.title("🥗 MacroSnap")
 
 with button_col:
-    send_disabled = len(st.session_state.messages) <= 1
-    if st.button("📤 Send to Telegram", disabled=send_disabled, use_container_width=True):
-        with st.spinner("Summarizing your day..."):
-            summary = ask_gemini([SUMMARY_REQUEST_PROMPT])
-        success, info = send_telegram(st.session_state.telegram_chat_id, summary)
-        if success:
-            st.success("Sent! Check your Telegram 📲")
+    if st.button("📤 Send to Telegram", use_container_width=True):
+        if len(st.session_state.messages) <= 1:
+            st.info("💡 Please log a meal first (send a photo or description below) so I have something to summarize!")
         else:
-            st.error(f"Couldn't send that: {info}")
+            with st.spinner("Summarizing your meals..."):
+                summary = ask_gemini([SUMMARY_REQUEST_PROMPT])
+            success, info = send_telegram(st.session_state.telegram_chat_id, summary)
+            if success:
+                st.success("Sent! Check your Telegram 📲")
+            else:
+                st.error(f"Couldn't send that: {info}")
 
 st.caption(f"Logged in as {st.session_state.name} • Updates go to Telegram Chat ID: {st.session_state.telegram_chat_id}")
 
@@ -178,3 +195,4 @@ if user_input:
     with st.spinner("Crunching the numbers..."):
         answer = ask_gemini(parts)
     add_message("assistant", "text", answer)
+    st.rerun()
